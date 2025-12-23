@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 import MetaTrader5 as mt5
 from decimal import Decimal, ROUND_HALF_UP
+import threading
+import time
 
 app = FastAPI()
 
@@ -8,18 +10,48 @@ ticket_map = {}
 MASTER_SECRET = "TopFrag?!"
 
 # ===============================
-# MT5 SAFE INIT (IMPORTANT)
+# MT5 STATE
 # ===============================
-def ensure_mt5():
-    if not mt5.initialize():
-        raise RuntimeError(f"MT5 init failed: {mt5.last_error()}")
+mt5_ready = False
+mt5_lock = threading.Lock()
+
+# ===============================
+# MT5 SAFE INIT (NON-BLOCKING)
+# ===============================
+def init_mt5_safe():
+    global mt5_ready
+
+    for attempt in range(1, 6):
+        if mt5.initialize():
+            print("✅ MT5 initialized")
+            mt5_ready = True
+            return
+        print(f"⚠️ MT5 init failed (attempt {attempt}):", mt5.last_error())
+        time.sleep(2)
+
+    print("❌ MT5 failed to initialize after retries")
+
+@app.on_event("startup")
+def start_mt5_background():
+    threading.Thread(target=init_mt5_safe, daemon=True).start()
 
 # ===============================
 # CLEAN SHUTDOWN
 # ===============================
 @app.on_event("shutdown")
 def shutdown_mt5():
-    mt5.shutdown()
+    if mt5_ready:
+        mt5.shutdown()
+
+# ===============================
+# ENSURE MT5 READY
+# ===============================
+def ensure_mt5(timeout=10):
+    start = time.time()
+    while not mt5_ready:
+        if time.time() - start > timeout:
+            raise RuntimeError("MT5 not ready (timeout)")
+        time.sleep(0.2)
 
 # ===============================
 # LOT CALC
@@ -48,11 +80,10 @@ def cancel_all_pending(symbol):
 
     count = 0
     for o in orders:
-        req = {
+        mt5.order_send({
             "action": mt5.TRADE_ACTION_REMOVE,
             "order": o.ticket
-        }
-        mt5.order_send(req)
+        })
         count += 1
 
     return count
@@ -63,7 +94,7 @@ def cancel_all_pending(symbol):
 @app.post("/webhook")
 def webhook(data: dict):
     try:
-        # 🔑 MT5 MUST BE INITIALIZED HERE
+        # ⏳ WAIT UNTIL MT5 IS READY
         ensure_mt5()
 
         if data.get("secret") != MASTER_SECRET:
