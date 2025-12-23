@@ -4,7 +4,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 app = FastAPI()
 ticket_map = {}
-MASTER_SECRET = "SECRET123"
+MASTER_SECRET = "TopFrag?!"
 
 
 # ===============================
