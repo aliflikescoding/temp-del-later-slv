@@ -54,19 +54,39 @@ def ensure_mt5(timeout=10):
         time.sleep(0.2)
 
 # ===============================
-# LOT CALC
+# LOT CALC (DEBUG HEAVY)
 # ===============================
 def calculate_volume():
+    print("\n[LOT DEBUG] ===== START LOT CALC =====")
+
     account = mt5.account_info()
     if account is None:
+        print("[LOT DEBUG] ❌ account_info() = None")
         raise Exception("Gagal mengambil account info MT5")
 
+    print("[LOT DEBUG] Login:", account.login)
+    print("[LOT DEBUG] Server:", account.server)
+    print("[LOT DEBUG] Balance:", account.balance)
+    print("[LOT DEBUG] Equity:", account.equity)
+    print("[LOT DEBUG] Free Margin:", account.margin_free)
+    print("[LOT DEBUG] Leverage:", account.leverage)
+
     balance = Decimal(str(account.balance))
+    print("[LOT DEBUG] Balance (Decimal):", balance)
+
+    # rumus utama
     raw_volume = (balance / Decimal("10000")) / Decimal("2")
+    print("[LOT DEBUG] Raw volume (before rounding):", raw_volume)
+
     volume = raw_volume.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    print("[LOT DEBUG] Volume after rounding:", volume)
 
     if volume < Decimal("0.01"):
+        print("[LOT DEBUG] ⚠️ Volume < 0.01 → force to 0.01")
         volume = Decimal("0.01")
+
+    print("[LOT DEBUG] FINAL LOT:", volume)
+    print("[LOT DEBUG] ===== END LOT CALC =====\n")
 
     return float(volume)
 
@@ -76,6 +96,7 @@ def calculate_volume():
 def cancel_all_pending(symbol):
     orders = mt5.orders_get(symbol=symbol)
     if not orders:
+        print(f"[MT5 DEBUG] No pending orders for {symbol}")
         return 0
 
     count = 0
@@ -86,6 +107,7 @@ def cancel_all_pending(symbol):
         })
         count += 1
 
+    print(f"[MT5 DEBUG] Canceled {count} pending orders for {symbol}")
     return count
 
 # ===============================
@@ -94,13 +116,16 @@ def cancel_all_pending(symbol):
 @app.post("/webhook")
 def webhook(data: dict):
     try:
-        # ⏳ WAIT UNTIL MT5 IS READY
+        print("\n[WEBHOOK] Incoming data:", data)
+
         ensure_mt5()
 
         if data.get("secret") != MASTER_SECRET:
+            print("[WEBHOOK] ❌ Invalid secret")
             return {"error": "unauthorized"}
 
         action = data.get("action")
+        print("[WEBHOOK] Action:", action)
 
         # ===============================
         # OPEN → PENDING ORDER
@@ -108,6 +133,7 @@ def webhook(data: dict):
         if action == "OPEN":
 
             lot = calculate_volume()
+            print("[WEBHOOK] Lot to be used:", lot)
 
             order_type_map = {
                 "BUY_LIMIT": mt5.ORDER_TYPE_BUY_LIMIT,
@@ -116,6 +142,7 @@ def webhook(data: dict):
 
             order_type = order_type_map.get(data.get("type"))
             if order_type is None:
+                print("[WEBHOOK] ❌ Invalid order type:", data.get("type"))
                 return {"error": "invalid_order_type"}
 
             request = {
@@ -130,10 +157,15 @@ def webhook(data: dict):
                 "type_filling": mt5.ORDER_FILLING_RETURN
             }
 
+            print("[WEBHOOK] Order request:", request)
+
             result = mt5.order_send(request)
 
             if result is None:
+                print("[WEBHOOK] ❌ order_send returned None")
                 return {"error": "order_send_failed", "detail": mt5.last_error()}
+
+            print("[WEBHOOK] Order result:", result)
 
             if result.retcode != mt5.TRADE_RETCODE_DONE:
                 return {
@@ -206,4 +238,5 @@ def webhook(data: dict):
         return {"error": "unknown_action"}
 
     except Exception as e:
+        print("[EXCEPTION]", str(e))
         return {"error": "exception", "detail": str(e)}
