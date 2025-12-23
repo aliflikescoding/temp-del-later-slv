@@ -64,7 +64,7 @@ def init_mt5_safe():
         print("👤 Login :", account.login)
         print("🌐 Server:", account.server)
 
-        if account.login != SLAVE_LOGIN:
+        if int(account.login) != int(SLAVE_LOGIN):
             print("❌ SALAH AKUN SLAVE!")
             print("Expected:", SLAVE_LOGIN)
             print("Detected:", account.login)
@@ -288,5 +288,6 @@ def webhook(data: dict):
     except Exception as e:
         print("[EXCEPTION]", str(e))
         return {"error": "exception", "detail": str(e)}
+
 
 
