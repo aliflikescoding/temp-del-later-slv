@@ -1,0 +1,172 @@
+from fastapi import FastAPI
+import MetaTrader5 as mt5
+from decimal import Decimal, ROUND_HALF_UP
+
+app = FastAPI()
+ticket_map = {}
+MASTER_SECRET = "SECRET123"
+
+
+# ===============================
+# MT5 INIT
+# ===============================
+@app.on_event("startup")
+def start_mt5():
+    if not mt5.initialize():
+        print("MT5 init gagal:", mt5.last_error())
+
+
+# ===============================
+# LOT CALC
+# ===============================
+def calculate_volume():
+    account = mt5.account_info()
+    if account is None:
+        raise Exception("Gagal mengambil account info MT5")
+
+    balance = Decimal(str(account.balance))
+    raw_volume = (balance / Decimal("10000")) / Decimal("2")
+    volume = raw_volume.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    if volume < Decimal("0.01"):
+        volume = Decimal("0.01")
+
+    return float(volume)
+
+
+# ===============================
+# CANCEL ALL PENDING
+# ===============================
+def cancel_all_pending(symbol):
+    orders = mt5.orders_get(symbol=symbol)
+    if not orders:
+        return 0
+
+    count = 0
+    for o in orders:
+        req = {
+            "action": mt5.TRADE_ACTION_REMOVE,
+            "order": o.ticket
+        }
+        mt5.order_send(req)
+        count += 1
+
+    return count
+
+
+# ===============================
+# WEBHOOK
+# ===============================
+@app.post("/webhook")
+def webhook(data: dict):
+    try:
+        if data.get("secret") != MASTER_SECRET:
+            return {"error": "unauthorized"}
+
+        action = data.get("action")
+
+        # ===============================
+        # OPEN → PENDING ORDER
+        # ===============================
+        if action == "OPEN":
+
+            lot = calculate_volume()
+
+            order_type_map = {
+                "BUY_LIMIT": mt5.ORDER_TYPE_BUY_LIMIT,
+                "SELL_LIMIT": mt5.ORDER_TYPE_SELL_LIMIT
+            }
+
+            order_type = order_type_map.get(data.get("type"))
+            if order_type is None:
+                return {"error": "invalid_order_type"}
+
+            request = {
+                "action": mt5.TRADE_ACTION_PENDING,
+                "symbol": data["symbol"],
+                "volume": lot,
+                "type": order_type,
+                "price": float(data["entry"]),
+                "deviation": 20,
+                "magic": 86421357,
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_RETURN
+            }
+
+            result = mt5.order_send(request)
+
+            if result is None:
+                return {"error": "order_send_failed", "detail": mt5.last_error()}
+
+            if result.retcode != mt5.TRADE_RETCODE_DONE:
+                return {
+                    "error": "order_rejected",
+                    "retcode": result.retcode,
+                    "comment": result.comment
+                }
+
+            ticket_map[data["master_ticket"]] = result.order
+
+            return {
+                "status": "pending_created",
+                "slave_ticket": result.order,
+                "lot": lot
+            }
+
+        # ===============================
+        # CANCEL PENDING (NEW)
+        # ===============================
+        elif action == "CANCEL_PENDING":
+
+            symbol = data["symbol"]
+            canceled = cancel_all_pending(symbol)
+
+            return {
+                "status": "pending_canceled",
+                "symbol": symbol,
+                "count": canceled
+            }
+
+        # ===============================
+        # CLOSE (UNCHANGED)
+        # ===============================
+        elif action == "CLOSE":
+
+            ticket = ticket_map.get(data["master_ticket"])
+            if not ticket:
+                return {"error": "ticket_not_found"}
+
+            positions = mt5.positions_get(ticket=ticket)
+            if not positions:
+                return {"error": "position_not_found"}
+
+            pos = positions[0]
+
+            close_type = (
+                mt5.ORDER_TYPE_SELL
+                if pos.type == mt5.POSITION_TYPE_BUY
+                else mt5.ORDER_TYPE_BUY
+            )
+
+            result = mt5.order_send({
+                "action": mt5.TRADE_ACTION_DEAL,
+                "position": pos.ticket,
+                "symbol": pos.symbol,
+                "volume": pos.volume,
+                "type": close_type,
+                "deviation": 20
+            })
+
+            if result.retcode != mt5.TRADE_RETCODE_DONE:
+                return {
+                    "error": "close_failed",
+                    "retcode": result.retcode,
+                    "comment": result.comment
+                }
+
+            return {"status": "closed"}
+
+        return {"error": "unknown_action"}
+
+    except Exception as e:
+        return {"error": "exception", "detail": str(e)}
