@@ -19,8 +19,6 @@ mt5_lock = threading.Lock()
 # MT5 SAFE INIT (NON-BLOCKING)
 # ===============================
 
-SLAVE_LOGIN = 411603095  # ganti dengan login SLAVE
-
 
 def init_mt5_safe():
     global mt5_ready
@@ -33,9 +31,6 @@ def init_mt5_safe():
 
         print("✅ MT5 initialized")
 
-        # ===============================
-        # CEK TERMINAL INFO
-        # ===============================
         terminal = mt5.terminal_info()
         if terminal is None:
             print("❌ Gagal ambil terminal info")
@@ -44,16 +39,9 @@ def init_mt5_safe():
             continue
 
         print("🟢 AutoTrading:", terminal.trade_allowed)
+        print("📂 Terminal path:", terminal.path)
+        print("📂 Data path    :", terminal.data_path)
 
-        if not terminal.trade_allowed:
-            print("❌ AutoTrading OFF di terminal SLAVE")
-            mt5.shutdown()
-            time.sleep(2)
-            continue
-
-        # ===============================
-        # CEK ACCOUNT INFO
-        # ===============================
         account = mt5.account_info()
         if account is None:
             print("❌ Gagal ambil account info")
@@ -61,22 +49,18 @@ def init_mt5_safe():
             time.sleep(2)
             continue
 
-        print("👤 Login :", account.login)
-        print("🌐 Server:", account.server)
+        print("👤 LOGIN MT5 :", account.login, type(account.login))
+        print("🌐 SERVER   :", account.server)
+        print("💰 BALANCE  :", account.balance)
 
-        if int(account.login) != int(SLAVE_LOGIN):
-            print("❌ SALAH AKUN SLAVE!")
-            print("Expected:", SLAVE_LOGIN)
-            print("Detected:", account.login)
-            mt5.shutdown()
-            time.sleep(2)
-            continue
+        # ❗ TIDAK ADA VALIDASI LOGIN
+        print("⚠️ LOGIN CHECK DISABLED (MANUAL VERIFY)")
 
-        print("✅ SLAVE ACCOUNT VERIFIED")
         mt5_ready = True
         return
 
-    raise RuntimeError("❌ MT5 SLAVE gagal diverifikasi setelah retry")
+    raise RuntimeError("❌ MT5 gagal initialize setelah retry")
+
 
 
 @app.on_event("startup")
@@ -288,6 +272,7 @@ def webhook(data: dict):
     except Exception as e:
         print("[EXCEPTION]", str(e))
         return {"error": "exception", "detail": str(e)}
+
 
 
 
