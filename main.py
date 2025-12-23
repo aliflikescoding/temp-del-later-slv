@@ -3,18 +3,23 @@ import MetaTrader5 as mt5
 from decimal import Decimal, ROUND_HALF_UP
 
 app = FastAPI()
+
 ticket_map = {}
 MASTER_SECRET = "TopFrag?!"
 
-
 # ===============================
-# MT5 INIT
+# MT5 SAFE INIT (IMPORTANT)
 # ===============================
-@app.on_event("startup")
-def start_mt5():
+def ensure_mt5():
     if not mt5.initialize():
-        print("MT5 init gagal:", mt5.last_error())
+        raise RuntimeError(f"MT5 init failed: {mt5.last_error()}")
 
+# ===============================
+# CLEAN SHUTDOWN
+# ===============================
+@app.on_event("shutdown")
+def shutdown_mt5():
+    mt5.shutdown()
 
 # ===============================
 # LOT CALC
@@ -32,7 +37,6 @@ def calculate_volume():
         volume = Decimal("0.01")
 
     return float(volume)
-
 
 # ===============================
 # CANCEL ALL PENDING
@@ -53,13 +57,15 @@ def cancel_all_pending(symbol):
 
     return count
 
-
 # ===============================
 # WEBHOOK
 # ===============================
 @app.post("/webhook")
 def webhook(data: dict):
     try:
+        # 🔑 MT5 MUST BE INITIALIZED HERE
+        ensure_mt5()
+
         if data.get("secret") != MASTER_SECRET:
             return {"error": "unauthorized"}
 
@@ -114,7 +120,7 @@ def webhook(data: dict):
             }
 
         # ===============================
-        # CANCEL PENDING (NEW)
+        # CANCEL PENDING
         # ===============================
         elif action == "CANCEL_PENDING":
 
@@ -128,7 +134,7 @@ def webhook(data: dict):
             }
 
         # ===============================
-        # CLOSE (UNCHANGED)
+        # CLOSE POSITION
         # ===============================
         elif action == "CLOSE":
 
