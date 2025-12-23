@@ -19,29 +19,65 @@ mt5_lock = threading.Lock()
 # MT5 SAFE INIT (NON-BLOCKING)
 # ===============================
 
-print("Connecting to MetaTrader 5...")
-if not mt5.initialize():
-    print("❌ MT5 gagal connect:", mt5.last_error())
-    quit()
-print("✔ MT5 berhasil connect\n")
+SLAVE_LOGIN = 411603095  # ganti dengan login SLAVE
 
-terminal_info = mt5.terminal_info()
-if not terminal_info or not terminal_info.trade_allowed:
-    print("❌ Auto Trading OFF")
-    quit()
 
 def init_mt5_safe():
     global mt5_ready
 
     for attempt in range(1, 6):
-        if mt5.initialize():
-            print("✅ MT5 initialized")
-            mt5_ready = True
-            return
-        print(f"⚠️ MT5 init failed (attempt {attempt}):", mt5.last_error())
-        time.sleep(2)
+        if not mt5.initialize():
+            print(f"⚠️ MT5 init failed (attempt {attempt}):", mt5.last_error())
+            time.sleep(2)
+            continue
 
-    print("❌ MT5 failed to initialize after retries")
+        print("✅ MT5 initialized")
+
+        # ===============================
+        # CEK TERMINAL INFO
+        # ===============================
+        terminal = mt5.terminal_info()
+        if terminal is None:
+            print("❌ Gagal ambil terminal info")
+            mt5.shutdown()
+            time.sleep(2)
+            continue
+
+        print("🟢 AutoTrading:", terminal.trade_allowed)
+
+        if not terminal.trade_allowed:
+            print("❌ AutoTrading OFF di terminal SLAVE")
+            mt5.shutdown()
+            time.sleep(2)
+            continue
+
+        # ===============================
+        # CEK ACCOUNT INFO
+        # ===============================
+        account = mt5.account_info()
+        if account is None:
+            print("❌ Gagal ambil account info")
+            mt5.shutdown()
+            time.sleep(2)
+            continue
+
+        print("👤 Login :", account.login)
+        print("🌐 Server:", account.server)
+
+        if account.login != SLAVE_LOGIN:
+            print("❌ SALAH AKUN SLAVE!")
+            print("Expected:", SLAVE_LOGIN)
+            print("Detected:", account.login)
+            mt5.shutdown()
+            time.sleep(2)
+            continue
+
+        print("✅ SLAVE ACCOUNT VERIFIED")
+        mt5_ready = True
+        return
+
+    raise RuntimeError("❌ MT5 SLAVE gagal diverifikasi setelah retry")
+
 
 @app.on_event("startup")
 def start_mt5_background():
@@ -252,4 +288,5 @@ def webhook(data: dict):
     except Exception as e:
         print("[EXCEPTION]", str(e))
         return {"error": "exception", "detail": str(e)}
+
 
