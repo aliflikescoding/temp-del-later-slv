@@ -18,6 +18,18 @@ mt5_lock = threading.Lock()
 # ===============================
 # MT5 SAFE INIT (NON-BLOCKING)
 # ===============================
+
+print("Connecting to MetaTrader 5...")
+if not mt5.initialize():
+    print("❌ MT5 gagal connect:", mt5.last_error())
+    quit()
+print("✔ MT5 berhasil connect\n")
+
+terminal_info = mt5.terminal_info()
+if not terminal_info or not terminal_info.trade_allowed:
+    print("❌ Auto Trading OFF")
+    quit()
+
 def init_mt5_safe():
     global mt5_ready
 
@@ -240,3 +252,4 @@ def webhook(data: dict):
     except Exception as e:
         print("[EXCEPTION]", str(e))
         return {"error": "exception", "detail": str(e)}
+
